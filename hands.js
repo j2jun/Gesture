@@ -1,8 +1,8 @@
 // Browser glue shared by index.html and slides.html: model, camera, drawing, saved custom gestures.
-import { FilesetResolver, GestureRecognizer, DrawingUtils } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs';
 import { features, classify } from './logic.js';
 
-const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
+const CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35';
+const WASM = `${CDN}/wasm`;
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
 const MIN_SCORE = 0.5; // below this, say "unclear" instead of guessing
 const STORE = 'gesture.custom.v1';
@@ -13,9 +13,13 @@ export const LABELS = {
   Thumb_Up: ['👍', 'Thumbs up'], Thumb_Down: ['👎', 'Thumbs down'], Victory: ['✌️', 'Peace'], ILoveYou: ['🤟', 'I love you'],
 };
 
+// MediaPipe is imported here, not at the top, so a blocked CDN lands in the page's
+// "couldn't load" message instead of silently killing the page script.
+let mp;
 export async function loadRecognizer(runningMode = 'VIDEO') {
-  const vision = await FilesetResolver.forVisionTasks(WASM);
-  const make = (delegate) => GestureRecognizer.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode, numHands: 2 });
+  mp = await import(`${CDN}/vision_bundle.mjs`);
+  const vision = await mp.FilesetResolver.forVisionTasks(WASM);
+  const make = (delegate) => mp.GestureRecognizer.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode, numHands: 2 });
   try { return await make('GPU'); } catch { return make('CPU'); } // some browsers lack WebGL2
 }
 
@@ -39,9 +43,9 @@ export function drawFrame(canvas, source, result) {
   canvas.width = source.videoWidth || source.naturalWidth;
   canvas.height = source.videoHeight || source.naturalHeight;
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-  const draw = new DrawingUtils(ctx), lw = Math.max(2, canvas.width / 200);
+  const draw = new mp.DrawingUtils(ctx), lw = Math.max(2, canvas.width / 200);
   for (const hand of result.landmarks) {
-    draw.drawConnectors(hand, GestureRecognizer.HAND_CONNECTIONS, { color: '#19b37d', lineWidth: lw });
+    draw.drawConnectors(hand, mp.GestureRecognizer.HAND_CONNECTIONS, { color: '#19b37d', lineWidth: lw });
     draw.drawLandmarks(hand, { color: '#fff', fillColor: '#19b37d', lineWidth: 1, radius: lw * 1.2 });
   }
 }
