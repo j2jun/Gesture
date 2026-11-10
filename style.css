@@ -1,0 +1,28 @@
+:root { --bg: #f6f5f2; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #dddcd7; --accent: #2f6fe4; --on-accent: #fff; --err: #c62828; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #131416; --panel: #1d1f22; --ink: #ececee; --muted: #9b9ba3; --line: #2e3035; --accent: #6b9cff; --on-accent: #0d1526; --err: #ff7b72; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 2rem; }
+nav a { color: var(--accent); font-weight: 600; }
+.sub { margin: 4px 0 20px; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; align-items: center; }
+button, label.btn, input[type=text], textarea { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; }
+button, label.btn { font-weight: 600; padding: 9px 16px; cursor: pointer; }
+input[type=text] { padding: 9px 12px; min-width: 0; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.link { border: 0; background: none; color: var(--muted); padding: 4px 8px; font-weight: 500; }
+button:disabled { opacity: .5; cursor: default; }
+label.btn input { display: none; }
+:focus-visible, label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+#status.err { color: var(--err); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.panel h2 { margin: 0 0 8px; font-size: 1rem; color: var(--muted); font-weight: 600; }
+.stage { position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 4 / 3; display: grid; place-items: center; }
+.stage p { color: #bbb; padding: 0 16px; text-align: center; }
+canvas { width: 100%; height: 100%; object-fit: contain; display: none; }
+canvas.mirror { transform: scaleX(-1); }
+video { display: none; }

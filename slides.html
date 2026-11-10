@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gesture Slides</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👍</text></svg>">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    textarea { width: 100%; min-height: 320px; padding: 12px; resize: vertical; line-height: 1.5; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 12px 0 0; padding: 0; list-style: none; color: var(--muted); }
+    #show { position: fixed; inset: 0; background: #000; color: #fff; display: none; place-items: center; z-index: 1; }
+    #show.on { display: grid; }
+    #slide { white-space: pre-line; text-align: center; font: 700 clamp(1.6rem, 5.5vw, 4.5rem)/1.25 system-ui, sans-serif; padding: 6vh 6vw; max-width: 100%; overflow-wrap: anywhere; }
+    #show.blank #slide { visibility: hidden; }
+    .hud { position: fixed; bottom: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: end; gap: 12px; pointer-events: none; }
+    .hud > * { pointer-events: auto; }
+    .hud .left { display: grid; gap: 6px; color: #9a9a9a; font-size: .95rem; }
+    #show button { background: #222; color: #ddd; border-color: #333; padding: 6px 12px; }
+    .cam { width: 200px; text-align: center; color: #bbb; font-size: .9rem; }
+    .cam canvas { display: block; aspect-ratio: 16 / 9; height: auto; border-radius: 8px; background: #111; transform: scaleX(-1); }
+    #toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #fff; color: #000; font-weight: 700; padding: 8px 18px; border-radius: 999px; opacity: 0; transition: opacity .2s; }
+    #toast.on { opacity: 1; }
+    #show.blank .hud { opacity: .35; }
+    @media (max-width: 520px) { .cam { width: 120px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Gesture Slides</h1>
+    <nav><a href="./">← Gesture</a></nav>
+  </header>
+  <p class="sub">Run lyrics or announcements hands-free. Type your slides, press Present, and control them from across the room.</p>
+
+  <label for="text" class="sub" style="display:block;margin-bottom:6px">Slides, separated by a blank line</label>
+  <textarea id="text"></textarea>
+  <div class="controls" style="margin-top:12px">
+    <button id="present" class="primary" disabled>Present</button>
+    <span id="status" role="status">Loading model…</span>
+  </div>
+  <ul class="legend">
+    <li>👍 Thumbs up: next</li><li>👎 Thumbs down: back</li><li>✋ Open palm: blank screen on/off</li>
+    <li>Keys: → / Space, ←, B, Esc</li>
+  </ul>
+  <p class="sub" style="margin-top:12px">Hold a gesture for about half a second. To repeat it, lower your hand and show it again. Prefer your own gestures? Teach ones named <b>next</b>, <b>back</b> or <b>blank</b> on the <a href="./">main page</a>.</p>
+</main>
+
+<div id="show" aria-live="polite">
+  <div id="slide"></div>
+  <div class="hud">
+    <div class="left">
+      <span id="count"></span>
+      <button id="exit">Exit (Esc)</button>
+    </div>
+    <div class="cam"><canvas id="canvas"></canvas><span id="seen">Starting camera…</span></div>
+  </div>
+  <div id="toast"></div>
+</div>
+<video id="video" playsinline muted></video>
+
+<script type="module">
+  import { loadRecognizer, readHands, drawFrame, startCamera, cameraError, customStore } from './hands.js';
+  import { makeTrigger } from './logic.js';
+
+  const ACTIONS = {
+    Thumb_Up: 'next', Thumb_Down: 'back', Open_Palm: 'blank',
+    'custom:next': 'next', 'custom:back': 'back', 'custom:blank': 'blank',
+  };
+  const TOAST = { next: '▶ Next', back: '◀ Back', blank: '■ Blank' };
+  const STORE = 'gesture.slides.v1';
+  const SAMPLE = 'Welcome!\nWe are glad you are here\n\nAmazing grace, how sweet the sound\nThat saved a wretch like me\n\nI once was lost, but now am found\nWas blind, but now I see\n\nThank you for coming';
+
+  const $ = (id) => document.getElementById(id);
+  const text = $('text'), show = $('show'), video = $('video');
+  let recognizer, stop = null, slides = [], index = 0, toastTimer;
+
+  try { text.value = localStorage.getItem(STORE) ?? SAMPLE; } catch { text.value = SAMPLE; }
+  text.oninput = () => { try { localStorage.setItem(STORE, text.value); } catch {} };
+
+  function render() {
+    $('slide').textContent = slides[index] ?? '';
+    $('count').textContent = `${index + 1} / ${slides.length}${show.classList.contains('blank') ? ' · blank' : ''}`;
+  }
+
+  function act(action) {
+    if (action === 'next') index = Math.min(index + 1, slides.length - 1);
+    if (action === 'back') index = Math.max(index - 1, 0);
+    if (action === 'blank') show.classList.toggle('blank');
+    render();
+    $('toast').textContent = TOAST[action];
+    $('toast').classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $('toast').classList.remove('on'), 700);
+  }
+
+  async function present() {
+    slides = text.value.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+    if (!slides.length) { $('status').textContent = 'Add at least one slide first.'; return; }
+    index = 0;
+    show.classList.remove('blank');
+    show.classList.add('on');
+    render();
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    const custom = customStore.load(), trigger = makeTrigger(400);
+    try {
+      stop = await startCamera(video, (now) => {
+        const result = recognizer.recognizeForVideo(video, now);
+        drawFrame($('canvas'), video, result);
+        const hand = readHands(result, custom)[0];
+        $('seen').textContent = hand ? `${hand.emoji} ${hand.name}` : 'No hand';
+        const fired = trigger(hand?.key ?? null, now);
+        if (ACTIONS[fired]) act(ACTIONS[fired]);
+      });
+    } catch (err) {
+      $('seen').textContent = cameraError(err) + ' Keys still work.';
+    }
+  }
+
+  function exit() {
+    stop?.(); stop = null;
+    show.classList.remove('on');
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    $('present').focus();
+  }
+
+  $('present').onclick = present;
+  $('exit').onclick = exit;
+  // In fullscreen the browser eats Esc to leave fullscreen, so treat that as Exit too.
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && stop) exit(); });
+  document.addEventListener('keydown', (e) => {
+    if (!show.classList.contains('on')) return;
+    const action = { ArrowRight: 'next', ' ': 'next', PageDown: 'next', ArrowLeft: 'back', PageUp: 'back', b: 'blank', B: 'blank' }[e.key];
+    if (action) { e.preventDefault(); act(action); }
+    if (e.key === 'Escape') exit();
+  });
+
+  try {
+    recognizer = await loadRecognizer();
+    $('present').disabled = false;
+    $('status').textContent = 'Ready.';
+  } catch (err) {
+    console.error(err);
+    $('status').textContent = "Couldn't load the gesture model. Check your connection and reload.";
+  }
+</script>
+</body>
+</html>
