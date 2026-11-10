@@ -56,3 +56,15 @@ test('trigger fires once per held gesture, through real-world flicker', () => {
   assert.deepStrictEqual(hold('down', 1500, 8), ['down']);  // flickering hold still fires (this was the bug)
   assert.deepStrictEqual(hold('up', 250), []);              // too brief: nothing
 });
+
+test('trigger still works on a slow, CPU-only machine (~7 fps)', () => {
+  const fire = makeTrigger(400);
+  let t = 0;
+  // Frames 143 ms apart; drop 2 frames in a row every 5 (seen in CPU-only Chrome logs).
+  const hold = (label, ms) => {
+    const out = [];
+    for (let i = 0; i < ms / 143; i++, t += 143) out.push(fire(i % 5 >= 3 ? null : label, t));
+    return out.filter(Boolean);
+  };
+  assert.deepStrictEqual(hold('down', 2500), ['down']);
+});

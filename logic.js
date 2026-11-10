@@ -30,13 +30,15 @@ export function classify(samples, f, k = 5, maxDist = MAX_DISTANCE) {
 }
 
 // Fires once when a gesture has been held for holdMs. To fire again, change gesture
-// (or lower your hand) for holdMs. The recognizer drops single frames all the time, so
-// any other label lasting under graceMs is ignored: it neither resets a hold nor double-fires.
-export function makeTrigger(holdMs = 400, graceMs = 150) {
+// (or lower your hand) for holdMs. The recognizer drops frames all the time, so while a
+// gesture is showing, any other label lasting under graceMs is ignored: it neither resets
+// the hold nor double-fires. 300 ms covers two dropped frames even on a slow CPU-only
+// machine (~7 fps). A gesture appearing from "nothing" starts its hold immediately.
+export function makeTrigger(holdMs = 400, graceMs = 300) {
   let candidate = null, since = 0, lastSeen = 0, stable = null;
   return (label, now) => {
     if (label === candidate) lastSeen = now;
-    else if (now - lastSeen > graceMs) { candidate = label; since = now; lastSeen = now; }
+    else if (candidate === null || now - lastSeen > graceMs) { candidate = label; since = now; lastSeen = now; }
     if (candidate === stable || now - since < holdMs) return null;
     stable = candidate;
     return stable;

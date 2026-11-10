@@ -20,7 +20,13 @@ export async function loadRecognizer(runningMode = 'VIDEO') {
   mp = await import(`${CDN}/vision_bundle.mjs`);
   const vision = await mp.FilesetResolver.forVisionTasks(WASM);
   const make = (delegate) => mp.GestureRecognizer.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode, numHands: 2 });
-  try { return await make('GPU'); } catch { return make('CPU'); } // some browsers lack WebGL2
+  let r;
+  try { r = await make('GPU'); } catch { r = await make('CPU'); } // some browsers lack WebGL2
+  // The first frame triggers slow one-time setup (4-5 s on CPU-only machines). Do it now,
+  // before "Ready", so the first gesture after pressing Present isn't missed.
+  const blank = Object.assign(document.createElement('canvas'), { width: 64, height: 64 });
+  runningMode === 'VIDEO' ? r.recognizeForVideo(blank, 1) : r.recognize(blank);
+  return r;
 }
 
 // One entry per hand. Your own trained gestures win over the built-in ones when they match.
