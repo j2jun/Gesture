@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gesture</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✋</text></svg>">
+  <style>
+    :root { --bg: #f6f5f2; --panel: #fff; --ink: #1d1d1f; --muted: #6b6b70; --line: #dddcd7; --accent: #2f6fe4; --hand: #19b37d; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #131416; --panel: #1d1f22; --ink: #ececee; --muted: #9b9ba3; --line: #2e3035; --accent: #6b9cff; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { margin: 0; font-size: 2rem; }
+    .sub { margin: 4px 0 20px; color: var(--muted); }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+    button, label.btn { font: inherit; font-weight: 600; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 9px 16px; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    label.btn input { display: none; }
+    :focus-visible, label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .layout { display: grid; gap: 16px; grid-template-columns: 1fr; }
+    @media (min-width: 720px) { .layout { grid-template-columns: 1fr 260px; } }
+    .stage { position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 4 / 3; display: grid; place-items: center; }
+    .stage p { color: #bbb; padding: 0 16px; text-align: center; }
+    canvas { width: 100%; height: 100%; object-fit: contain; display: none; }
+    canvas.mirror { transform: scaleX(-1); }
+    video { display: none; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    .panel h2 { margin: 0 0 8px; font-size: 1rem; color: var(--muted); font-weight: 600; }
+    #results { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+    #results li { display: grid; grid-template-columns: auto 1fr; gap: 0 12px; align-items: center; }
+    #results .emoji { font-size: 2.6rem; line-height: 1; grid-row: span 2; }
+    #results .name { font-weight: 700; font-size: 1.15rem; }
+    #results .score { color: var(--muted); font-size: .9rem; }
+    #results .none { color: var(--muted); }
+    .known { margin: 16px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: .9rem; }
+    .known li { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+    #status.err { color: #d33; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Gesture</h1>
+  <p class="sub">Hand gesture recognition in your browser. Video never leaves your device.</p>
+
+  <div class="controls">
+    <button id="camera" class="primary" disabled>Start camera</button>
+    <label class="btn">Try a photo<input id="photo" type="file" accept="image/*" disabled></label>
+  </div>
+  <p id="status" role="status">Loading model…</p>
+
+  <div class="layout">
+    <div class="stage">
+      <p id="placeholder">Start the camera or pick a photo of a hand.</p>
+      <canvas id="canvas"></canvas>
+      <video id="video" playsinline muted></video>
+    </div>
+    <section class="panel" aria-live="polite">
+      <h2>Detected</h2>
+      <ul id="results"><li class="none">Nothing yet.</li></ul>
+      <ul class="known" aria-label="Recognized gestures"></ul>
+    </section>
+  </div>
+</main>
+
+<script type="module">
+  import { FilesetResolver, GestureRecognizer, DrawingUtils } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs';
+
+  const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
+  const MODEL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
+  // Category names come from MediaPipe's built-in gesture model.
+  const LABELS = {
+    Closed_Fist: ['✊', 'Fist'], Open_Palm: ['✋', 'Open palm'], Pointing_Up: ['☝️', 'Pointing up'],
+    Thumb_Up: ['👍', 'Thumbs up'], Thumb_Down: ['👎', 'Thumbs down'], Victory: ['✌️', 'Peace'], ILoveYou: ['🤟', 'I love you'],
+  };
+  const MIN_SCORE = 0.5; // below this, show "not sure" instead of a guess
+
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('canvas'), ctx = canvas.getContext('2d'), video = $('video');
+  const draw = new DrawingUtils(ctx);
+  const status = (text, err) => { $('status').textContent = text; $('status').className = err ? 'err' : ''; };
+  document.querySelector('.known').append(...Object.values(LABELS).map(([e, n]) => Object.assign(document.createElement('li'), { textContent: `${e} ${n}` })));
+
+  let recognizer, mode = 'VIDEO', lastVideoTime = -1, stream;
+
+  async function load() {
+    const vision = await FilesetResolver.forVisionTasks(WASM);
+    const make = (delegate) => GestureRecognizer.createFromOptions(vision, { baseOptions: { modelAssetPath: MODEL, delegate }, runningMode: mode, numHands: 2 });
+    try { recognizer = await make('GPU'); } catch { recognizer = await make('CPU'); } // some browsers lack WebGL2
+  }
+
+  async function setMode(m) {
+    if (mode !== m) { mode = m; await recognizer.setOptions({ runningMode: m }); }
+  }
+
+  function render(source, result) {
+    canvas.width = source.videoWidth || source.naturalWidth;
+    canvas.height = source.videoHeight || source.naturalHeight;
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const lw = Math.max(2, canvas.width / 200);
+    for (const hand of result.landmarks) {
+      draw.drawConnectors(hand, GestureRecognizer.HAND_CONNECTIONS, { color: '#19b37d', lineWidth: lw });
+      draw.drawLandmarks(hand, { color: '#fff', fillColor: '#19b37d', lineWidth: 1, radius: lw * 1.2 });
+    }
+    showResults(result.gestures);
+  }
+
+  function showResults(gestures) {
+    const items = gestures.map(([top]) => {
+      const li = document.createElement('li');
+      const known = top && LABELS[top.categoryName] && top.score >= MIN_SCORE;
+      const [emoji, name] = known ? LABELS[top.categoryName] : ['🖐️', 'Hand, gesture unclear'];
+      li.innerHTML = '<span class="emoji"></span><span class="name"></span><span class="score"></span>';
+      li.children[0].textContent = emoji;
+      li.children[1].textContent = name;
+      li.children[2].textContent = known ? `${Math.round(top.score * 100)}% sure` : 'Try one of the gestures below';
+      return li;
+    });
+    $('results').replaceChildren(...(items.length ? items : [Object.assign(document.createElement('li'), { className: 'none', textContent: 'No hand in view.' })]));
+  }
+
+  function showCanvas(mirror) {
+    $('placeholder').style.display = 'none';
+    canvas.style.display = 'block';
+    canvas.classList.toggle('mirror', mirror);
+  }
+
+  function loop() {
+    if (!stream) return;
+    if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+      lastVideoTime = video.currentTime;
+      render(video, recognizer.recognizeForVideo(video, performance.now()));
+    }
+    requestAnimationFrame(loop);
+  }
+
+  function stopCamera() {
+    stream?.getTracks().forEach((t) => t.stop());
+    stream = null;
+    $('camera').textContent = 'Start camera';
+  }
+
+  $('camera').onclick = async () => {
+    if (stream) { stopCamera(); status('Camera stopped.'); return; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720, facingMode: 'user' } });
+    } catch (err) {
+      status(err.name === 'NotAllowedError' ? 'Camera permission was denied. Allow it in your browser settings, or try a photo.' : `Couldn't open the camera (${err.name}). Try a photo instead.`, true);
+      return;
+    }
+    await setMode('VIDEO');
+    video.srcObject = stream;
+    await video.play();
+    $('camera').textContent = 'Stop camera';
+    status('Show a gesture to the camera.');
+    showCanvas(true);
+    loop();
+  };
+
+  $('photo').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    stopCamera();
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    try { await img.decode(); } catch { status("That file isn't an image the browser can read.", true); return; }
+    await setMode('IMAGE');
+    render(img, recognizer.recognize(img));
+    URL.revokeObjectURL(img.src);
+    showCanvas(false);
+    status(`Analyzed ${file.name}.`);
+    e.target.value = '';
+  };
+
+  try {
+    await load();
+    $('camera').disabled = $('photo').disabled = false;
+    status(navigator.mediaDevices?.getUserMedia ? 'Ready.' : 'Ready. Camera needs https or localhost; photos still work.');
+  } catch (err) {
+    console.error(err);
+    status("Couldn't load the gesture model. Check your connection and reload.", true);
+  }
+</script>
+</body>
+</html>
